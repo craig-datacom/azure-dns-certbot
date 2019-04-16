@@ -1,0 +1,9 @@
+azure_credentials.json
+**/__pycache__
+*.egg-info
+/certbot
+/env
+/build
+/dist
+/dns-azure
+/.vs

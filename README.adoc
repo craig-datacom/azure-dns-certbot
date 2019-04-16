@@ -1,0 +1,195 @@
+﻿= README
+
+This in an authentication plugin for `certbot` that responds to DNS01 challenges
+by creating records in an Azure DNS zone.
+
+== Authentication
+
+The plugin relies on the environment for authentication. See the
+documentation for
+https://docs.microsoft.com/en-us/python/azure/python-sdk-azure-authenticate?view=azure-python#mgmt-auth-file[file based authentication in the Python SDK].
+
+It's recommended that you use a service principal. If you don't already have a
+suitable account, you will need to create one. Note that you will also need to
+supply an option to skip role assignment (`--skip-assignment`) unless you have
+permission to set roles at the subscription level.
+
+[source,shell]
+----
+$ az ad sp create-for-rbac --name '<service principal name>' --skip-assignment --sdk-auth > azure_credentials.json
+$ cat azure_credentials.json 
+{
+  "clientId": "********-****-****-****-************", 
+  "clientSecret": "********-****-****-****-************", 
+  "subscriptionId": "********-****-****-****-************", 
+  "tenantId": "********-****-****-****-************", 
+  "activeDirectoryEndpointUrl": "https://login.microsoftonline.com", 
+  "resourceManagerEndpointUrl": "https://management.azure.com/", 
+  "activeDirectoryGraphResourceId": "https://graph.windows.net/", 
+  "sqlManagementEndpointUrl": "https://management.core.windows.net:8443/", 
+  "galleryEndpointUrl": "https://gallery.azure.com/", 
+  "managementEndpointUrl": "https://management.core.windows.net/"
+}
+----
+
+This creates the service principal and generates the content of `azure_credentials.json`.
+If you have created the service principal by some other mechanism, then follow
+the above JSON template, replacing `clientId`, `clientSecret`, `subscriptionId`,
+and `tenantId` with the appropriate values.
+
+The newly created service principal needs to be granted the DNS Zone Contributor
+role on the DNS zones that will be used for challenges.
+
+Place `azure_credentials.json` somewhere accessible to the user that will run
+`certbot` and arrange for the environment variable `AZURE_AUTH_LOCATION` to point
+to it.
+
+== Maintenance
+
+The authenticator module needs to be installed as a pip module so that `certbot`
+can discover the `certbot.plugins` extension point (see `setup.py`).
+
+It's recommended that you work in a Python virtual environment:
+
+[source,shell]
+----
+$ python -m virtualenv dns-azure
+$ source dns-azure/bin/activate
+----
+
+When you're finished, use `deactivate`.
+
+
+In the root folder that contains setup.py:
+
+[source,shell]
+----
+$ pip install --editable .
+----
+
+You should now be able to see your plugin in the output of `certbot plugins --authenticators`.
+
+See <<Usage>> for running `certbot` with the plugin. Take note of the rate
+limiting for Let's Encrypt and prefer usage of either the `--dry-run` or 
+`--staging` options.
+
+`certbot` is usually run as `root`, but while developing you shouldn't do that.
+The following options will allow you to run it as an unprivileged user:
+
+ * `--config-dir`
+ * `--work-dir`
+ * `--logs-dir`
+
+
+== Packaging
+
+In the root folder that contains setup.py:
+
+[source,shell]
+----
+$ python setup.py bdist_wheel
+----
+
+This will generate `dist/datacom_dns_azure-${version}-py2.py3-none-any.whl`.
+
+== Installation
+
+This is very much a work in progress. See below for specific target system
+documentation.
+
+For the generic case, `pip install` executed on the wheel distribution file
+might work. You may need to use `pip2` or `pip3` depending on the version of
+Python that is used to run `certbot`.
+
+=== Centos 7
+
+This has been tested with release 7.6.
+
+[source,shell]
+----
+# yum install epel-release
+# yum install python-pip
+# pip install --upgrade pip
+# pip install --upgrade certbot azure
+# pip install --upgrade setuptools
+# pip install --upgrade datacom_dns_azure-${version}-py2.py3-none-any.whl
+----
+
+[NOTE]
+.Package installation incompatibilities
+====
+Installing `certbot` and/or the Azure Python SDK (`python-azure-sdk`)
+via `yum` packages causes no end of dependency grief. Feel free to experiment.
+====
+
+=== Windows 10
+
+The plugin has been tested on Windows 10 running Python 3.7 from a PowerShell
+prompt after installing `certbot` and the Azure Python SDK with `pip`.
+Installation of a Linux subsystem isn't required.
+
+[source,powershell]
+----
+PS C:\> pip install certbot azure
+----
+
+=== Verifying an Installation
+
+Verify the installation with `certbot plugins --authenticators`. The following
+should be one of the listed plugins:
+
+----
+* datacom-dns-azure:dns-azure
+Description: Obtain certificates using a DNS TXT record (if you are using
+Microsoft Azure for DNS).
+Interfaces: IAuthenticator, IPlugin
+Entry point: dns-azure = datacom_dns_azure.dns_azure:Authenticator
+----
+
+== Usage
+
+Once installed, you need to use the `-a` option of `certbot` to activate usage
+of the new plugin as an authenticator:
+
+Once installed, `certbot` can use it as the authenticator during a request. Use
+the option `-a datacom-dns-azure:dns-azure`.
+
+The Azure DNS authenticator needs to be told which Azure resource group(s) to
+search for the correct DNS zone. Use the
+`--datacom-dns-azure:dns-azure-resource-goup` option. You can use this option
+multiple times to search for a DNS zone across multiple resource groups.
+
+The standard DNS authenticator timeout option is also available as
+`--datacom-dns-azure:dns-azure-propagation-seconds`.
+
+A basic example of using the plugin would be:
+
+[source,shell]
+----
+# certbot -a datacom-dns-azure:dns-azure -d <your DNS name>
+--datacom-dns-azure:dns-azure-resource-goup <your resource group> certonly
+----
+
+Apart from the additional options to activate the new authenticator plugin,
+all existing `certbot` usage remains the same.
+
+[NOTE]
+.Rate Limiting
+====
+You might want to use the `--dry-run`  or `--staging` options, due to
+https://letsencrypt.org/docs/rate-limits/[rate limiting]. For more information,
+see documentation about the Let's Encrypt
+https://letsencrypt.org/docs/staging-environment/[staging environment].
+====
+
+== To Do
+
+ * Define a Gitlab pipeline for packaging and distribution.
+ * Create a PyPi repository on the Nexus server and upload the module there.
+ * The major sticking point to just using standard distribution packages
+   (`yum install certbot python-pip python-azure-sdk python2-keyring python2-certifi`)
+   is that the older version of the Azure Python SDK packages do not have the
+   function `get_client_from_auth_file` which is required to read
+   credentials from the environment. Maybe configuration options and an
+   alternative authentication API might be a better alternative.
+    
